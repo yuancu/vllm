@@ -18,9 +18,7 @@ from ..utils import create_new_process_for_each_test
 GTE_MODEL = "Alibaba-NLP/gte-multilingual-base"
 
 # S3 adapter paths — downloaded to local in fixture
-ADAPTER_S3_PREFIX = (
-    "s3://sagemaker-us-east-1-273354668433/embed-adapter/adapters"
-)
+ADAPTER_S3_PREFIX = "s3://sagemaker-us-east-1-273354668433/embed-adapter/adapters"
 
 
 @pytest.fixture(scope="session")
@@ -33,7 +31,9 @@ def gte_lora_adapter_1(tmp_path_factory):
     tar_path = tmp_dir / "adapter.tar.gz"
     subprocess.run(
         [
-            "aws", "s3", "cp",
+            "aws",
+            "s3",
+            "cp",
             f"{ADAPTER_S3_PREFIX}/tenant-1-r32.tar.gz",
             str(tar_path),
         ],
@@ -54,7 +54,9 @@ def gte_lora_adapter_2(tmp_path_factory):
     tar_path = tmp_dir / "adapter.tar.gz"
     subprocess.run(
         [
-            "aws", "s3", "cp",
+            "aws",
+            "s3",
+            "cp",
             f"{ADAPTER_S3_PREFIX}/tenant-2-r32.tar.gz",
             str(tar_path),
         ],
