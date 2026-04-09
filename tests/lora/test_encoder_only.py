@@ -163,3 +163,50 @@ def test_gte_multi_lora(gte_lora_adapter_1, gte_lora_adapter_2):
         assert not np.allclose(emb_1, emb_2, atol=1e-5), (
             "Different LoRA adapters should produce different embeddings"
         )
+
+
+@create_new_process_for_each_test()
+def test_gte_multi_lora_mixed_batch(gte_lora_adapter_1, gte_lora_adapter_2):
+    """Test Punica-style multi-adapter batching: different adapters in one call."""
+    llm = create_gte_llm(enable_lora=True, max_loras=4)
+
+    lora_request_1 = LoRARequest(
+        lora_name="tenant-1",
+        lora_int_id=1,
+        lora_path=gte_lora_adapter_1,
+    )
+    lora_request_2 = LoRARequest(
+        lora_name="tenant-2",
+        lora_int_id=2,
+        lora_path=gte_lora_adapter_2,
+    )
+
+    prompt = TEST_PROMPTS[0]
+
+    # Single-adapter reference runs
+    ref_1 = llm.embed([prompt], lora_request=lora_request_1)[0]
+    ref_2 = llm.embed([prompt], lora_request=lora_request_2)[0]
+
+    # Mixed-adapter batch: same prompt, two different adapters in one call
+    mixed = llm.embed(
+        [prompt, prompt],
+        lora_request=[lora_request_1, lora_request_2],
+    )
+
+    mixed_emb_1 = np.array(mixed[0].outputs.embedding)
+    mixed_emb_2 = np.array(mixed[1].outputs.embedding)
+    ref_emb_1 = np.array(ref_1.outputs.embedding)
+    ref_emb_2 = np.array(ref_2.outputs.embedding)
+
+    # Mixed-batch results should match single-adapter results
+    np.testing.assert_allclose(mixed_emb_1, ref_emb_1, atol=1e-3, err_msg=(
+        "Mixed-batch adapter-1 output differs from single-adapter run"
+    ))
+    np.testing.assert_allclose(mixed_emb_2, ref_emb_2, atol=1e-3, err_msg=(
+        "Mixed-batch adapter-2 output differs from single-adapter run"
+    ))
+
+    # The two adapters in the mixed batch should produce different results
+    assert not np.allclose(mixed_emb_1, mixed_emb_2, atol=1e-5), (
+        "Different adapters in mixed batch should produce different embeddings"
+    )
