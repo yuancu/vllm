@@ -71,13 +71,14 @@ def create_gte_llm(enable_lora: bool = True, max_loras: int = 4):
     """Create a GteNewModel LLM instance with optional LoRA support."""
     return vllm.LLM(
         model=GTE_MODEL,
-        task="embed",
         enable_lora=enable_lora,
         max_loras=max_loras if enable_lora else 1,
         max_lora_rank=32,
         dtype="half",
         enforce_eager=True,
         trust_remote_code=True,
+        hf_overrides={"architectures": ["GteNewModel"]},
+        gpu_memory_utilization=0.8,
     )
 
 
