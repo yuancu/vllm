@@ -444,7 +444,7 @@ class BertWithRopeEncoder(nn.Module):
 @default_pooling_type(seq_pooling_type="CLS")
 class BertWithRope(nn.Module, SupportsLoRA, SupportsQuant):
     packed_modules_mapping = {
-        "qkv_proj": ["q_proj", "k_proj", "v_proj"],
+        "qkv_proj": ["qkv_proj"],
         "gate_up_proj": ["gate_proj", "up_proj"],
     }
     embedding_modules = {}
