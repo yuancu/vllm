@@ -7,8 +7,13 @@ Tests verify that GteNewModel can load and use LoRA adapters for embedding
 tasks, producing distinct outputs per adapter.
 """
 
+import json
+import os
+
 import numpy as np
 import pytest
+import torch
+from safetensors.torch import save_file
 
 import vllm
 from vllm.lora.request import LoRARequest
@@ -17,54 +22,88 @@ from ..utils import create_new_process_for_each_test
 
 GTE_MODEL = "Alibaba-NLP/gte-multilingual-base"
 
-# S3 adapter paths — downloaded to local in fixture
-ADAPTER_S3_PREFIX = "s3://sagemaker-us-east-1-273354668433/embed-adapter/adapters"
+# GteNewModel config: hidden_size=768, num_heads=12, num_layers=12
+# LoRA targets use HF naming (pre weights-mapper):
+#   encoder.layer.{i}.attention.qkv_proj  (768 -> 2304)
+#   encoder.layer.{i}.attention.o_proj    (768 -> 768)
+LORA_RANK = 8
+LORA_ALPHA = 16
+NUM_LAYERS = 12
+HIDDEN_SIZE = 768
+QKV_SIZE = HIDDEN_SIZE * 3  # 2304
+
+
+def _create_random_gte_lora(save_dir: str, seed: int = 0):
+    """Generate a synthetic PEFT LoRA adapter for GteNewModel.
+
+    Creates adapter_config.json and adapter_model.safetensors with
+    random weights using HF naming conventions (pre weights-mapper).
+    """
+    rng = torch.Generator().manual_seed(seed)
+    lora_weights = {}
+
+    for i in range(NUM_LAYERS):
+        prefix = f"base_model.model.encoder.layer.{i}.attention"
+
+        # qkv_proj: in=768, out=2304
+        lora_weights[f"{prefix}.qkv_proj.lora_A.weight"] = torch.randn(
+            LORA_RANK, HIDDEN_SIZE, generator=rng, dtype=torch.float16
+        )
+        lora_weights[f"{prefix}.qkv_proj.lora_B.weight"] = torch.randn(
+            QKV_SIZE, LORA_RANK, generator=rng, dtype=torch.float16
+        ) * 0.01
+
+        # o_proj: in=768, out=768
+        lora_weights[f"{prefix}.o_proj.lora_A.weight"] = torch.randn(
+            LORA_RANK, HIDDEN_SIZE, generator=rng, dtype=torch.float16
+        )
+        lora_weights[f"{prefix}.o_proj.lora_B.weight"] = torch.randn(
+            HIDDEN_SIZE, LORA_RANK, generator=rng, dtype=torch.float16
+        ) * 0.01
+
+    adapter_config = {
+        "peft_type": "LORA",
+        "auto_mapping": None,
+        "base_model_name_or_path": GTE_MODEL,
+        "revision": None,
+        "task_type": None,
+        "inference_mode": True,
+        "r": LORA_RANK,
+        "lora_alpha": LORA_ALPHA,
+        "lora_dropout": 0.0,
+        "fan_in_fan_out": False,
+        "bias": "none",
+        "modules_to_save": None,
+        "init_lora_weights": True,
+        "layers_to_transform": None,
+        "layers_pattern": None,
+        "target_modules": ["qkv_proj", "o_proj"],
+        "exclude_modules": None,
+        "use_rslora": False,
+        "use_dora": False,
+        "loftq_config": None,
+    }
+
+    os.makedirs(save_dir, exist_ok=True)
+    with open(os.path.join(save_dir, "adapter_config.json"), "w") as f:
+        json.dump(adapter_config, f, indent=2)
+    save_file(lora_weights, os.path.join(save_dir, "adapter_model.safetensors"))
 
 
 @pytest.fixture(scope="session")
 def gte_lora_adapter_1(tmp_path_factory):
-    """Download and extract tenant-1 LoRA adapter from S3."""
-    import subprocess
-    import tarfile
-
-    tmp_dir = tmp_path_factory.mktemp("gte_lora_1")
-    tar_path = tmp_dir / "adapter.tar.gz"
-    subprocess.run(
-        [
-            "aws",
-            "s3",
-            "cp",
-            f"{ADAPTER_S3_PREFIX}/tenant-1-r32.tar.gz",
-            str(tar_path),
-        ],
-        check=True,
-    )
-    with tarfile.open(tar_path, "r:gz") as tar:
-        tar.extractall(path=tmp_dir)
-    return str(tmp_dir)
+    """Generate a random LoRA adapter (seed=42)."""
+    adapter_dir = str(tmp_path_factory.mktemp("gte_lora_1"))
+    _create_random_gte_lora(adapter_dir, seed=42)
+    return adapter_dir
 
 
 @pytest.fixture(scope="session")
 def gte_lora_adapter_2(tmp_path_factory):
-    """Download and extract tenant-2 LoRA adapter from S3."""
-    import subprocess
-    import tarfile
-
-    tmp_dir = tmp_path_factory.mktemp("gte_lora_2")
-    tar_path = tmp_dir / "adapter.tar.gz"
-    subprocess.run(
-        [
-            "aws",
-            "s3",
-            "cp",
-            f"{ADAPTER_S3_PREFIX}/tenant-2-r32.tar.gz",
-            str(tar_path),
-        ],
-        check=True,
-    )
-    with tarfile.open(tar_path, "r:gz") as tar:
-        tar.extractall(path=tmp_dir)
-    return str(tmp_dir)
+    """Generate a different random LoRA adapter (seed=123)."""
+    adapter_dir = str(tmp_path_factory.mktemp("gte_lora_2"))
+    _create_random_gte_lora(adapter_dir, seed=123)
+    return adapter_dir
 
 
 def create_gte_llm(enable_lora: bool = True, max_loras: int = 4):
@@ -73,7 +112,7 @@ def create_gte_llm(enable_lora: bool = True, max_loras: int = 4):
         model=GTE_MODEL,
         enable_lora=enable_lora,
         max_loras=max_loras if enable_lora else 1,
-        max_lora_rank=32,
+        max_lora_rank=LORA_RANK,
         dtype="half",
         enforce_eager=True,
         trust_remote_code=True,
